@@ -1,0 +1,367 @@
+--// Services
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local MarketplaceService = game:GetService("MarketplaceService")
+
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local currentLoopedTrack = nil
+local hoverMode = false
+
+--// GUI Setup
+local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
+ScreenGui.Name = "AnimationCopierGUI"
+
+local MainFrame = Instance.new("Frame", ScreenGui)
+MainFrame.Size = UDim2.new(0, 240, 0, 430) -- taller to fit speed box
+MainFrame.Position = UDim2.new(0, 50, 0, 50)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+local UIStroke = Instance.new("UIStroke", MainFrame)
+UIStroke.Color = Color3.fromRGB(0, 170, 255)
+UIStroke.Thickness = 2
+
+local Title = Instance.new("TextLabel", MainFrame)
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+Title.Text = "🎭 Animation Copier"
+Title.TextColor3 = Color3.new(1, 1, 1)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 16
+
+local Minimize = Instance.new("TextButton", MainFrame)
+Minimize.Size = UDim2.new(0, 30, 0, 30)
+Minimize.Position = UDim2.new(1, -30, 0, 0)
+Minimize.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+Minimize.Text = "-"
+Minimize.TextColor3 = Color3.new(1, 1, 1)
+Minimize.Font = Enum.Font.GothamBold
+Minimize.TextSize = 20
+
+local Content = Instance.new("Frame", MainFrame)
+Content.Size = UDim2.new(1, 0, 1, -30)
+Content.Position = UDim2.new(0, 0, 0, 30)
+Content.BackgroundTransparency = 1
+
+local function createButton(text, posY)
+	local btn = Instance.new("TextButton", Content)
+	btn.Size = UDim2.new(1, -20, 0, 30)
+	btn.Position = UDim2.new(0, 10, 0, posY)
+	btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	btn.Text = text
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.Font = Enum.Font.Gotham
+	btn.TextSize = 14
+	btn.BorderSizePixel = 0
+	return btn
+end
+
+local InputBox = Instance.new("TextBox", Content)
+InputBox.Size = UDim2.new(1, -20, 0, 30)
+InputBox.Position = UDim2.new(0, 10, 0, 10)
+InputBox.PlaceholderText = "Type username..."
+InputBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+InputBox.TextColor3 = Color3.new(1, 1, 1)
+InputBox.Font = Enum.Font.Gotham
+InputBox.TextSize = 14
+InputBox.ClearTextOnFocus = false
+InputBox.Text = ""
+
+local CopyButton = createButton("📋 Copy Animation ID", 50)
+
+local PlayBox = Instance.new("TextBox", Content)
+PlayBox.Size = UDim2.new(1, -20, 0, 30)
+PlayBox.Position = UDim2.new(0, 10, 0, 90)
+PlayBox.PlaceholderText = "Paste animation ID here..."
+PlayBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+PlayBox.TextColor3 = Color3.new(1, 1, 1)
+PlayBox.Font = Enum.Font.Gotham
+PlayBox.TextSize = 14
+PlayBox.ClearTextOnFocus = false
+PlayBox.Text = ""
+
+local PlayButton = createButton("▶️ Play Animation", 130)
+local LoopButton = createButton("🔁 Loop Animation", 170)
+local StopButton = createButton("⏹ Stop Animation", 210)
+local MirrorButton = createButton("📷 Mirror Player Emote", 250)
+local CopyIDsButton = createButton("📦 Copy All Emote IDs", 290)
+
+-- NEW SpeedBox for animation speed
+local SpeedBox = Instance.new("TextBox", Content)
+SpeedBox.Size = UDim2.new(1, -20, 0, 30)
+SpeedBox.Position = UDim2.new(0, 10, 0, 330)
+SpeedBox.PlaceholderText = "Animation speed (default 1)"
+SpeedBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+SpeedBox.TextColor3 = Color3.new(1, 1, 1)
+SpeedBox.Font = Enum.Font.Gotham
+SpeedBox.TextSize = 14
+SpeedBox.ClearTextOnFocus = false
+SpeedBox.Text = "1"
+
+--// Notification
+local function Notify(message)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = "Animation Copier",
+			Text = message,
+			Duration = 3
+		})
+	end)
+end
+
+--// Clipboard
+local function SetClipboard(text)
+	if setclipboard then setclipboard(text)
+	elseif syn and syn.setclipboard then syn.setclipboard(text)
+	else Notify("Clipboard not supported.") end
+end
+
+-- Normalize animation ID to rbxassetid:// format or nil
+local function NormalizeAnimationId(animId)
+	if not animId then return nil end
+	-- extract digits only
+	local idNum = animId:match("%d+")
+	if idNum then
+		return "rbxassetid://" .. idNum
+	end
+	return nil
+end
+
+--// Animation Tools
+local function GetAnimationIdFromHumanoid(hum)
+	if not hum then return end
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then return end
+
+	for _, track in animator:GetPlayingAnimationTracks() do
+		if track.Animation and track.Animation.AnimationId then
+			return track.Animation.AnimationId
+		end
+	end
+end
+
+local function GetAnimationIdFromPlayer(player)
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	return GetAnimationIdFromHumanoid(hum)
+end
+
+local function GetAnimationIdFromNPC(model)
+	if not model then return end
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	return GetAnimationIdFromHumanoid(hum)
+end
+
+local function PlayAnimation(animationId, looped)
+	local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+
+	local animIdNum = animationId:gsub("%D", "")
+	if animIdNum == "" then
+		Notify("Invalid animation ID.")
+		return
+	end
+
+	local speed = tonumber(SpeedBox.Text)
+	if not speed or speed <= 0 then speed = 1 end
+
+	local anim = Instance.new("Animation")
+	anim.AnimationId = "rbxassetid://" .. animIdNum
+	local track = hum:LoadAnimation(anim)
+
+	if currentLoopedTrack then
+		currentLoopedTrack:Stop()
+		currentLoopedTrack:Destroy()
+		currentLoopedTrack = nil
+	end
+
+	track.Looped = looped or false
+	track:Play()
+	track:AdjustSpeed(speed)
+
+	if looped then
+		currentLoopedTrack = track
+	end
+
+	Notify(looped and ("Looping animation at speed "..speed) or ("Playing animation at speed "..speed))
+end
+
+--// Buttons
+CopyButton.MouseButton1Click:Connect(function()
+	local target = Players:FindFirstChild(InputBox.Text)
+	if target then
+		local animId = GetAnimationIdFromPlayer(target)
+		local normId = NormalizeAnimationId(animId)
+		if normId then
+			SetClipboard(normId)
+			Notify("Copied Animation ID.")
+		else
+			Notify("No animation found.")
+		end
+	else
+		Notify("Player not found.")
+	end
+end)
+
+PlayBox.Focused:Connect(function()
+	if getclipboard then PlayBox.Text = getclipboard() end
+end)
+
+PlayButton.MouseButton1Click:Connect(function()
+	if PlayBox.Text ~= "" then
+		PlayAnimation(PlayBox.Text, false)
+	else Notify("Enter animation ID.") end
+end)
+
+LoopButton.MouseButton1Click:Connect(function()
+	if PlayBox.Text ~= "" then
+		PlayAnimation(PlayBox.Text, true)
+	else Notify("Enter animation ID.") end
+end)
+
+StopButton.MouseButton1Click:Connect(function()
+	local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	for _, track in hum:GetPlayingAnimationTracks() do track:Stop() end
+	if currentLoopedTrack then currentLoopedTrack:Destroy() currentLoopedTrack = nil end
+	Notify("Stopped all animations.")
+end)
+
+MirrorButton.MouseButton1Click:Connect(function()
+	local target = Players:FindFirstChild(InputBox.Text)
+	if not target then return Notify("Player not found.") end
+	local targetHum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+	local localHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if not targetHum or not localHum then return end
+
+	for _, t in localHum:GetPlayingAnimationTracks() do t:Stop() end
+
+	for _, v in targetHum:GetPlayingAnimationTracks() do
+		if v.Animation and not v.Animation.AnimationId:find("507768375") then
+			local anim = Instance.new("Animation", localHum)
+			anim.AnimationId = v.Animation.AnimationId
+			local track = localHum:LoadAnimation(anim)
+			track:Play(0.1, 1, v.Speed)
+			track.TimePosition = v.TimePosition
+			task.spawn(function() v.Stopped:Wait() track:Stop() track:Destroy() end)
+		end
+	end
+
+	Notify("Mirroring emote from " .. target.Name)
+end)
+
+CopyIDsButton.MouseButton1Click:Connect(function()
+	local target = Players:FindFirstChild(InputBox.Text)
+	if not target then return Notify("Player not found.") end
+	local hum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+
+	local result = ""
+	for _, v in hum:GetPlayingAnimationTracks() do
+		local id = v.Animation and v.Animation.AnimationId:match("%d+")
+		if id and not v.Animation.AnimationId:find("507768375") then
+			local success, info = pcall(function()
+				return MarketplaceService:GetProductInfo(tonumber(id))
+			end)
+			result ..= ("\nName: %s\nID: rbxassetid://%s\n"):format(success and info.Name or "Unknown", id)
+		end
+	end
+	if result ~= "" then SetClipboard(result) Notify("Copied emote IDs.") else Notify("No animations.") end
+end)
+
+--// Minimize
+local originalSize = MainFrame.Size
+local originalPosition = MainFrame.Position
+local minimized = false
+Minimize.MouseButton1Click:Connect(function()
+	minimized = not minimized
+
+	if minimized then
+		-- Minimize: hide content, shrink frame to title bar only
+		Content.Visible = false
+		MainFrame.Size = UDim2.new(originalSize.X.Scale, originalSize.X.Offset, 0, 30)
+	else
+		-- Restore original size and content visibility
+		Content.Visible = true
+		MainFrame.Size = originalSize
+		MainFrame.Position = originalPosition
+	end
+
+	Minimize.Text = minimized and "+" or "-"
+end)
+
+--// Hover + Ctrl+5 Highlight Copy
+local highlight = Instance.new("Highlight", ScreenGui)
+highlight.FillTransparency = 1
+highlight.OutlineColor = Color3.fromRGB(0, 255, 0)
+highlight.OutlineTransparency = 0
+highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+highlight.Enabled = false
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe then return end
+	if input.KeyCode == Enum.KeyCode.Five and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+		hoverMode = not hoverMode
+		Notify(hoverMode and "Hover mode enabled" or "Hover mode disabled")
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if not hoverMode then highlight.Enabled = false return end
+	local t = Mouse.Target
+	if t then
+		local model = t:FindFirstAncestorOfClass("Model")
+		if model then
+			-- Check if it's player
+			local plr = Players:GetPlayerFromCharacter(model)
+			if plr and plr ~= LocalPlayer then
+				highlight.Adornee = model
+				highlight.Enabled = true
+			else
+				-- If no player, check if NPC with Humanoid
+				if model:FindFirstChildOfClass("Humanoid") then
+					highlight.Adornee = model
+					highlight.Enabled = true
+				else
+					highlight.Enabled = false
+				end
+			end
+		else
+			highlight.Enabled = false
+		end
+	else
+		highlight.Enabled = false
+	end
+end)
+
+Mouse.Button1Down:Connect(function()
+	if hoverMode and highlight.Enabled and highlight.Adornee then
+		local plr = Players:GetPlayerFromCharacter(highlight.Adornee)
+		if plr then
+			local animId = GetAnimationIdFromPlayer(plr)
+			local normId = NormalizeAnimationId(animId)
+			if normId then
+				PlayBox.Text = normId
+				SetClipboard(normId)
+				Notify("Copied and autofilled animation ID: " .. normId)
+			else
+				Notify("No animation found.")
+			end
+		else
+			-- Not a player, try NPC
+			local animId = GetAnimationIdFromNPC(highlight.Adornee)
+			local normId = NormalizeAnimationId(animId)
+			if normId then
+				PlayBox.Text = normId
+				SetClipboard(normId)
+				Notify("Copied and autofilled NPC animation ID: " .. normId)
+			else
+				Notify("No animation found on NPC.")
+			end
+		end
+	end
+end)
